@@ -11,8 +11,61 @@ import AsyncStore from "../../internal/utils/async-store";
 import { getChartSeries, getMasterSeries } from "../../internal/utils/chart-series";
 import { isEqualArrays } from "../../internal/utils/utils";
 import { CoreChartProps } from "../interfaces";
-import { getChartLegendItems, getPointId, getSeriesId } from "../utils";
+import { getChartLegendItems, getOptionsId, getPointId, getSeriesId, getVisibleLegendItems } from "../utils";
 import { ChartExtraContext } from "./chart-extra-context";
+
+// Derives legend items from raw Highcharts options (no chart instance needed).
+// Used to seed the legend store before Highcharts renders, so the legend occupies its
+// real height on the first paint and the chart height calculation is correct.
+export function getInitialLegendItems(
+  options: CoreChartProps.ChartOptions,
+  colors: string[],
+  getItemOptions: CoreChartProps.GetItemOptions = () => ({}),
+): readonly CoreChartProps.LegendItem[] {
+  const { primaryItems, secondaryItems } = getVisibleLegendItems(options);
+  const allItems = [
+    ...primaryItems.map((item) => ({ item, isSecondary: false })),
+    ...secondaryItems.map((item) => ({ item, isSecondary: true })),
+  ];
+  return allItems.map(({ item, isSecondary }, index) => {
+    const id = getOptionsId(item as { id?: string; name?: string });
+    const name = (item as { name?: string }).name ?? "";
+    const color = (item as { color?: string }).color ?? colors[index % colors.length] ?? "black";
+    const status = getItemOptions(id).status;
+    const markerType: ChartSeriesMarkerType = getSeriesMarkerTypeFromOptions(item);
+    const marker = <ChartSeriesMarker type={markerType} color={color} visible={true} status={status} />;
+    return { id, name, marker, visible: true, highlighted: false, isSecondary };
+  });
+}
+
+function getSeriesMarkerTypeFromOptions(
+  item: Highcharts.SeriesOptionsType | Highcharts.PointOptionsType,
+): ChartSeriesMarkerType {
+  if (!item || typeof item !== "object") {
+    return "large-square";
+  }
+  if (!("type" in item)) {
+    return "large-square";
+  }
+  if ("dashStyle" in item && item.dashStyle && item.dashStyle !== "Solid") {
+    return "dashed";
+  }
+  switch (item.type) {
+    case "area":
+    case "areaspline":
+      return "hollow-square";
+    case "line":
+    case "spline":
+      return "line";
+    case "column":
+    case "pie":
+      return "large-square";
+    case "bubble":
+      return "circle";
+    default:
+      return "large-square";
+  }
+}
 
 // The reactive state is used to propagate changes in legend items to the core legend React component.
 export interface ReactiveLegendState {
@@ -24,14 +77,25 @@ export class ChartExtraLegend extends AsyncStore<ReactiveLegendState> {
   private context: ChartExtraContext;
   private visibilityMode: "internal" | "external" = "external";
 
-  constructor(context: ChartExtraContext) {
-    super({ items: [] });
+  constructor(context: ChartExtraContext, initialItems: readonly CoreChartProps.LegendItem[] = []) {
+    super({ items: initialItems });
     this.context = context;
   }
 
   public onChartRender = () => {
     this.initLegend();
     this.updateItemsVisibility();
+  };
+
+  // Update the legend store with items derived from props before Highcharts renders.
+  // Only used before the chart is ready (i.e. before the first onChartRender).
+  public seedItems = (items: readonly CoreChartProps.LegendItem[]) => {
+    const prevState = this.get().items.reduce(
+      (map, item) => map.set(item.id, item),
+      new Map<string, CoreChartProps.LegendItem>(),
+    );
+    const merged = items.map((item) => ({ ...item, highlighted: prevState.get(item.id)?.highlighted ?? false }));
+    this.updateLegendItems(merged);
   };
 
   // If visible items are explicitly provided, we use them to update visibility of chart's series or points (by ID).

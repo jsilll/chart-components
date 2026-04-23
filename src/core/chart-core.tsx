@@ -21,6 +21,7 @@ import * as Styles from "../internal/chart-styles";
 import { castArray } from "../internal/utils/utils";
 import { useChartAPI } from "./chart-api";
 import { ChartExtraContext } from "./chart-api/chart-extra-context";
+import { getInitialLegendItems } from "./chart-api/chart-extra-legend";
 import { ChartContainer } from "./chart-container";
 import { ChartApplication } from "./components/core-application";
 import { ChartFilters } from "./components/core-filters";
@@ -85,7 +86,15 @@ export function InternalCoreChart({
   };
   const handlers = { onHighlight, onClearHighlight, onVisibleItemsChange };
   const state = { visibleItems };
-  const api = useChartAPI(context, handlers, state);
+  const initialLegendItems =
+    context.legendEnabled && legendOptions?.enabled !== false
+      ? getInitialLegendItems(
+          options,
+          (options.colors ?? Styles.colors).filter((color): color is string => typeof color === "string"),
+          getItemOptions,
+        )
+      : [];
+  const api = useChartAPI(context, handlers, state, initialLegendItems);
 
   const rootClassName = clsx(testClasses.root, styles.root, fitHeight && styles["root-fit-height"], className);
   const rootRef = useRef<HTMLDivElement>(null);

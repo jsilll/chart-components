@@ -32,19 +32,22 @@ export function useChartAPI(
   settings: ChartExtraContext.Settings,
   handlers: ChartExtraContext.Handlers,
   state: ChartExtraContext.State,
+  initialLegendItems: readonly CoreChartProps.LegendItem[] = [],
 ) {
-  // The API helper instance defines many pieces of internal state with different lifecycles, most
-  // of which are not be invalidated when the hook re-renders, or properties change. That is why we
-  // create the instance once, when the component is mounted.
-  const api = useRef(new ChartAPI(settings, handlers, state)).current;
-  // The consumer-defined properties can still change during the component lifecycle. We propagate the
-  // changes by updating the helper's context directly. That is fine for most of the properties, as those
-  // are only used in event-based callbacks, and require nothing to recompute when there is a change.
+  const api = useRef(new ChartAPI(settings, handlers, state, initialLegendItems)).current;
   useEffect(() => {
     api.context.settings = settings;
     api.context.handlers = handlers;
     api.context.state = state;
   });
+
+  // When the series data changes, update the legend store synchronously during render so the
+  // legend renders with items on the same paint as the chart, preventing a two-phase draw.
+  const prevLegendItemsRef = useRef(initialLegendItems);
+  if (prevLegendItemsRef.current !== initialLegendItems && initialLegendItems.length > 0) {
+    api.seedLegendItems(initialLegendItems);
+    prevLegendItemsRef.current = initialLegendItems;
+  }
 
   // The only property that does require notifying the helper when it changes, is the visible items state.
   // We stringify the visible items array so that it is compared by value, and the effect is only fired when
@@ -79,18 +82,26 @@ export class ChartAPI {
   private chartExtraTooltip = new ChartExtraTooltip(this.context);
   private chartExtraNavigation = new ChartExtraNavigation(this.context, this.navigationHandlers);
   private chartExtraPointer = new ChartExtraPointer(this.context, this.pointerHandlers);
-  private chartExtraLegend = new ChartExtraLegend(this.context);
+  private chartExtraLegend: ChartExtraLegend;
   private chartExtraNodata = new ChartExtraNodata(this.context);
   private chartExtraAxisTitles = new ChartExtraAxisTitles(this.context);
+
+  // Legend marker renderer (initialized in constructor after chartExtraLegend).
+  public renderMarker!: ChartExtraLegend["renderMarker"];
+  public updateItemsVisibility!: ChartExtraLegend["updateItemsVisibility"];
 
   constructor(
     settings: ChartExtraContext.Settings,
     handlers: ChartExtraContext.Handlers,
     state: ChartExtraContext.State,
+    initialLegendItems: readonly CoreChartProps.LegendItem[] = [],
   ) {
     this.context.settings = settings;
     this.context.handlers = handlers;
     this.context.state = state;
+    this.chartExtraLegend = new ChartExtraLegend(this.context, initialLegendItems);
+    this.renderMarker = this.chartExtraLegend.renderMarker.bind(this.chartExtraLegend);
+    this.updateItemsVisibility = this.chartExtraLegend.updateItemsVisibility.bind(this.chartExtraLegend);
   }
 
   // The ready() returns true if the chart is initialized and helper methods are safe to use (after Highcharts triggers onChartRender).
@@ -139,6 +150,12 @@ export class ChartAPI {
     };
   }
 
+  // Seed the legend store with items derived from props, before Highcharts renders.
+  // Called during render (not in an effect) so the legend has its real height on the first paint.
+  public seedLegendItems = (items: readonly CoreChartProps.LegendItem[]) => {
+    this.chartExtraLegend.seedItems(items);
+  };
+
   // There is no cleanup or destroy event in Highcharts options, so we define a custom one
   // to be used when the React component unmounts.
   public onChartDestroy = () => {
@@ -164,9 +181,6 @@ export class ChartAPI {
   // References to SVG elements used for tooltip placement.
   public getTargetTrack = this.chartExtraTooltip.getTargetTrack.bind(this.chartExtraTooltip);
   public getGroupTrack = this.chartExtraTooltip.getGroupTrack.bind(this.chartExtraTooltip);
-
-  // Legend marker renderer.
-  public renderMarker = this.chartExtraLegend.renderMarker.bind(this.chartExtraLegend);
 
   // Callbacks assigned to the tooltip.
   public onMouseEnterTooltip = this.chartExtraPointer.onMouseEnterTooltip.bind(this.chartExtraPointer);
@@ -196,9 +210,6 @@ export class ChartAPI {
 
   // Reference to the role="application" element used for navigation.
   public setApplication = this.chartExtraNavigation.setApplication.bind(this.chartExtraNavigation);
-
-  // A callback to notify the helper when items visibility state changes.
-  public updateItemsVisibility = this.chartExtraLegend.updateItemsVisibility.bind(this.chartExtraLegend);
 
   // A callback used by the legend and filter components when series/segments visibility changes.
   public onItemVisibilityChange = (items: readonly string[], detail: CoreChartProps.InteractionKind) =>

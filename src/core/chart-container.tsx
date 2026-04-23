@@ -68,7 +68,18 @@ export function ChartContainer({
   const withMinHeight = (height: number) => Math.max(chartMinHeight ?? DEFAULT_CHART_MIN_HEIGHT, height) - heightOffset;
   const measuredChartHeight = withMinHeight(measures.chart - measures.header - measures.footer);
   const effectiveChartHeight = fitHeight ? measuredChartHeight : withMinHeight(chartHeight ?? DEFAULT_CHART_HEIGHT);
+  // When fitHeight=true and there is a bottom legend, the footer height must be measured before
+  // we can compute the correct chart height. If the footer hasn't been measured yet (footer === 0)
+  // but a legend is present, render a placeholder so Highcharts doesn't draw at the wrong height.
+  // Once the footer ResizeObserver fires, we replace the placeholder with the real chart.
   const hasLegend = primaryLegend || secondaryLegend;
+  const footerStale =
+    fitHeight && hasLegend && legendPosition !== "side" && measures.footer === 0 && measures.chart > 0;
+  const chartContent = footerStale ? (
+    <div style={{ minBlockSize: effectiveChartHeight }} />
+  ) : (
+    chart(effectiveChartHeight)
+  );
   return (
     <div
       ref={refs.chart}
@@ -89,7 +100,7 @@ export function ChartContainer({
             className={clsx(styles["chart-plot-wrapper"], testClasses["chart-plot-wrapper"])}
           >
             {verticalAxisTitle}
-            {chart(effectiveChartHeight)}
+            {chartContent}
             {noData}
           </div>
           <div className={styles["side-legend-container"]} style={{ maxBlockSize: effectiveChartHeight }}>
@@ -103,7 +114,7 @@ export function ChartContainer({
           className={clsx(styles["chart-plot-wrapper"], testClasses["chart-plot-wrapper"])}
         >
           {verticalAxisTitle}
-          {chart(effectiveChartHeight)}
+          {chartContent}
           {!hasLegend || legendPosition === "bottom" ? noData : null}
         </div>
       )}
